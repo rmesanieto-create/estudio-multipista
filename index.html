@@ -152,7 +152,7 @@
   .fx-card { border:1px solid var(--line); border-radius:var(--r); padding:14px; margin:14px 0; background:var(--inset); }
   .fx-card h3 { font-size:13px; font-weight:600; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
 
-  #camPrev { width:100%; max-width:300px; aspect-ratio:9/16; background:#000; border-radius:var(--r); object-fit:cover; display:block; margin:12px auto; box-shadow:0 8px 30px -12px #000, inset 0 0 0 1px var(--line); }
+  #camPrev { width:100%; max-width:300px; max-height:52vh; height:auto; background:#000; border-radius:var(--r); object-fit:contain; display:block; margin:12px auto; box-shadow:0 8px 30px -12px #000, inset 0 0 0 1px var(--line); }
 
   #recOverlay { position:fixed; inset:0; background:var(--bg); z-index:50; display:none; flex-direction:column; }
   #recOverlay.on { display:flex; }
@@ -486,8 +486,8 @@ function setupZoom(){
     if (!caps || !("zoom" in caps)) { $("zoomRow").style.display = "none"; return; }
     const z = $("zoom");
     z.min = caps.zoom.min; z.max = caps.zoom.max; z.step = caps.zoom.step || 0.1;
-    const cur = (track.getSettings && track.getSettings().zoom) || caps.zoom.min;
-    z.value = cur; $("zoomVal").textContent = Number(cur).toFixed(1) + "×";
+    z.value = caps.zoom.min; $("zoomVal").textContent = Number(caps.zoom.min).toFixed(1) + "×";
+    track.applyConstraints({advanced: [{zoom: caps.zoom.min}]}).catch(() => {});
     $("zoomRow").style.display = "";
     z.oninput = () => {
       const v = Number(z.value);
