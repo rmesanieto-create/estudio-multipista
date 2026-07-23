@@ -101,6 +101,18 @@
   <h2>3 · Pistas y mezcla</h2>
   <div class="slots" id="slotGrid"></div>
   <div id="mixers"></div>
+  <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin:10px 0">
+    <h3 style="font-size:13px; margin-bottom:8px">Mejora de audio <span class="badge">se aplica al exportar</span></h3>
+    <div class="row">
+      <label><input type="checkbox" id="fxHP" checked> filtro de graves (retumbe/golpes)</label>
+      <label><input type="checkbox" id="fxComp" checked> compresor (nivela el volumen)</label>
+    </div>
+    <div class="mixrow"><label style="min-width:150px"><input type="checkbox" id="fxGate" checked> puerta de ruido</label>
+      <input type="range" id="fxGateTh" min="-70" max="-30" value="-52" step="1"><span class="val" id="fxGateThVal">-52 dB</span></div>
+    <div class="mixrow"><label style="min-width:150px"><input type="checkbox" id="fxRev"> reverb de sala</label>
+      <input type="range" id="fxRevMix" min="5" max="45" value="20" step="1"><span class="val" id="fxRevMixVal">20%</span></div>
+    <p class="hint">Puerta de ruido: sube la sensibilidad (hacia -30) si aún se cuela ruido de fondo en los silencios; bájala (hacia -70) si te corta el final de las notas largas. Durante la exportación oirás la mezcla con los efectos ya aplicados.</p>
+  </div>
   <div class="row">
     <button id="btnPlayAll">▶ Reproducir todo</button>
     <button id="btnStopAll" style="display:none">■ Parar</button>
@@ -290,7 +302,7 @@ function renderSlots(){
       d.appendChild(v);
       const ctr = document.createElement("div"); ctr.className = "ctr";
       const dl = document.createElement("button"); dl.textContent = "⬇ Guardar";
-      dl.onclick = () => { const a = document.createElement("a"); a.href = tr.url; a.download = `voz${i+1}.webm`; a.click(); };
+      dl.onclick = () => { const a = document.createElement("a"); a.href = tr.url; a.download = `voz${i+1}.` + extFor(tr.blob && tr.blob.type); a.click(); };
       const rm = document.createElement("button"); rm.textContent = "✕ Borrar";
       rm.onclick = () => { URL.revokeObjectURL(tr.url); state.tracks[i] = {blob:null,url:null,gain:1,offset:0}; renderSlots(); };
       ctr.appendChild(dl); ctr.appendChild(rm); d.appendChild(ctr);
@@ -315,10 +327,91 @@ function renderSlots(){
 
 /* ---------- grabación ---------- */
 function pickMime(){
-  for (const m of ["video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"])
+  for (const m of ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1", "video/mp4",
+                   "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"])
     if (MediaRecorder.isTypeSupported(m)) return m;
   return "";
 }
+function extFor(type){ return (type||"").includes("mp4") ? "mp4" : "webm"; }
+
+/* ---------- mejora de audio ---------- */
+const GATE_SRC = URL.createObjectURL(new Blob([`
+class G extends AudioWorkletProcessor{
+  static get parameterDescriptors(){ return [{name:'threshold', defaultValue:-52, minValue:-90, maxValue:-20}]; }
+  constructor(){ super(); this.env = 0; this.g = 1; }
+  process(inp, out, p){
+    const i = inp[0], o = out[0];
+    if (!i || !i.length) return true;
+    const th = Math.pow(10, p.threshold[0] / 20);
+    const eUp = Math.exp(-1/(sampleRate*0.002)), eDn = Math.exp(-1/(sampleRate*0.12));
+    const gUp = Math.exp(-1/(sampleRate*0.004)), gDn = Math.exp(-1/(sampleRate*0.15));
+    for (let c = 0; c < i.length; c++){
+      const x = i[c], y = o[c];
+      for (let n = 0; n < x.length; n++){
+        const ax = Math.abs(x[n]);
+        this.env = ax > this.env ? ax + (this.env-ax)*eUp : ax + (this.env-ax)*eDn;
+        const t = this.env > th ? 1 : 0;
+        this.g = t > this.g ? t + (this.g-t)*gUp : t + (this.g-t)*gDn;
+        y[n] = x[n] * this.g;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('gate', G);`], {type:"application/javascript"}));
+let gateReady = null;
+async function makeGate(a){
+  try {
+    if (!gateReady) gateReady = a.audioWorklet.addModule(GATE_SRC);
+    await gateReady;
+    return new AudioWorkletNode(a, "gate");
+  } catch(e) { console.warn("puerta de ruido no disponible:", e); return null; }
+}
+function makeImpulse(a, seconds, decay){
+  const len = Math.floor(a.sampleRate * seconds);
+  const buf = a.createBuffer(2, len, a.sampleRate);
+  for (let c = 0; c < 2; c++){
+    const d = buf.getChannelData(c);
+    for (let n = 0; n < len; n++) d[n] = (Math.random()*2 - 1) * Math.pow(1 - n/len, decay);
+  }
+  return buf;
+}
+async function buildTrackChain(a, srcNode, trackGain, busInput){
+  let node = srcNode;
+  if ($("fxHP").checked) {
+    const hp = a.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 45; hp.Q.value = 0.7;
+    node.connect(hp); node = hp;
+  }
+  if ($("fxGate").checked) {
+    const gate = await makeGate(a);
+    if (gate) { gate.parameters.get("threshold").value = Number($("fxGateTh").value); node.connect(gate); node = gate; }
+  }
+  const g = a.createGain(); g.gain.value = trackGain;
+  node.connect(g); g.connect(busInput);
+}
+function buildMasterBus(a, dest){
+  const input = a.createGain();
+  let node = input;
+  if ($("fxComp").checked) {
+    const c = a.createDynamicsCompressor();
+    c.threshold.value = -24; c.knee.value = 18; c.ratio.value = 3; c.attack.value = 0.008; c.release.value = 0.22;
+    const makeup = a.createGain(); makeup.gain.value = 1.25;
+    node.connect(c); c.connect(makeup); node = makeup;
+  }
+  const out = a.createGain();
+  if ($("fxRev").checked) {
+    const conv = a.createConvolver(); conv.buffer = makeImpulse(a, 2.2, 3);
+    const wet = a.createGain(); wet.gain.value = Number($("fxRevMix").value) / 100;
+    const dry = a.createGain(); dry.gain.value = 1;
+    node.connect(dry); dry.connect(out);
+    node.connect(conv); conv.connect(wet); wet.connect(out);
+  } else node.connect(out);
+  out.connect(dest);
+  out.connect(a.destination);
+  return input;
+}
+$("fxGateTh").addEventListener("input", () => $("fxGateThVal").textContent = $("fxGateTh").value + " dB");
+$("fxRevMix").addEventListener("input", () => $("fxRevMixVal").textContent = $("fxRevMix").value + "%");
 $("btnRec").addEventListener("click", () => beginTake());
 $("btnStop").addEventListener("click", () => endTake());
 $("ovStop").addEventListener("click", () => endTake());
@@ -448,14 +541,15 @@ $("btnExport").addEventListener("click", async () => {
   const ctx = canvas.getContext("2d");
   const a = actx(); await a.resume();
   const dest = a.createMediaStreamDestination();
-  const els = used.map(t => {
+  const bus = buildMasterBus(a, dest);
+  const els = [];
+  for (const t of used) {
     const v = document.createElement("video");
     v.src = t.url; v.playsInline = true; v.muted = false; v.volume = 1;
     const src = a.createMediaElementSource(v);
-    const g = a.createGain(); g.gain.value = t.gain;
-    src.connect(g); g.connect(dest);
-    return {v, off: t.offset};
-  });
+    await buildTrackChain(a, src, t.gain, bus);
+    els.push({v, off: t.offset});
+  }
   await Promise.all(els.map(e => new Promise(r => { e.v.onloadedmetadata = r; })));
   const rects = layoutRects(els.length, W, H);
   const vidStream = canvas.captureStream(30);
@@ -466,9 +560,12 @@ $("btnExport").addEventListener("click", async () => {
   rec.onstop = () => {
     const blob = new Blob(chunks, {type: rec.mimeType || "video/webm"});
     const url = URL.createObjectURL(blob);
-    const box = $("exportBox"); box.innerHTML = "<p class='hint'>Resultado:</p>";
+    const ext = extFor(blob.type);
+    const box = $("exportBox");
+    box.innerHTML = "<p class='hint'>Resultado (" + ext.toUpperCase() +
+      (ext === "mp4" ? " — listo para Instagram y YouTube" : " — válido para YouTube; para Instagram conviértelo a MP4") + "):</p>";
     const v = document.createElement("video"); v.src = url; v.controls = true; v.playsInline = true;
-    const dl = document.createElement("a"); dl.href = url; dl.download = "multipista.webm";
+    const dl = document.createElement("a"); dl.href = url; dl.download = "multipista." + ext;
     dl.textContent = "⬇ Descargar vídeo"; dl.style.cssText = "display:block;color:var(--acc);margin:8px 0;font-size:15px";
     box.appendChild(v); box.appendChild(dl);
     els.forEach(e => e.v.remove());
