@@ -1,0 +1,23 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tutti">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#47a074"/>
+      <stop offset="1" stop-color="#1b5236"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".18"/>
+      <stop offset=".5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="118" fill="url(#tile)"/>
+  <rect x="16" y="16" width="480" height="480" rx="118" fill="url(#sheen)"/>
+  <rect x="17" y="17" width="478" height="478" rx="117" fill="none" stroke="#ffffff" stroke-opacity=".12" stroke-width="2"/>
+  <g fill="#f5f8f2">
+    <rect x="96"  y="228" width="46" height="132" rx="23"/>
+    <rect x="187" y="150" width="46" height="210" rx="23"/>
+    <rect x="278" y="196" width="46" height="164" rx="23"/>
+    <rect x="369" y="132" width="46" height="228" rx="23"/>
+  </g>
+  <circle cx="119" cy="188" r="15" fill="#a8e0c2"/>
+  <circle cx="301" cy="156" r="15" fill="#a8e0c2"/>
+</svg>
