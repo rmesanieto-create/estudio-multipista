@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Estudio Multipista — Bombardino</title>
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.4/build/opensheetmusicdisplay.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root { --bg:#16181d; --panel:#1f2229; --line:#2e323b; --txt:#e8e6e1; --mut:#9a9890; --acc:#ff7a1a; --ok:#41c979; --bad:#e05252; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,sans-serif; padding-bottom:40px; }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:10px; }
+  header h1 { font-size:18px; font-weight:600; }
+  header span { color:var(--mut); font-size:12px; }
+  section { margin:14px auto; max-width:900px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  section > h2 { font-size:14px; text-transform:uppercase; letter-spacing:.06em; color:var(--acc); margin-bottom:10px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0; }
+  label { font-size:13px; color:var(--mut); }
+  input[type=number] { width:70px; background:var(--bg); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:7px; font-size:15px; }
+  input[type=range] { accent-color:var(--acc); }
+  input[type=file] { font-size:13px; color:var(--mut); max-width:100%; }
+  button { background:var(--bg); color:var(--txt); border:1px solid var(--line); border-radius:10px; padding:10px 14px; font-size:14px; cursor:pointer; }
+  button:active { transform:scale(.97); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#16181d; font-weight:700; }
+  button.danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button:disabled { opacity:.4; }
+  .hint { font-size:12px; color:var(--mut); line-height:1.5; margin-top:6px; }
+  #scoreHost { background:#fff; border-radius:8px; min-height:120px; max-height:46vh; overflow-y:auto; padding:6px; }
+  #scoreHost:empty::after { content:"Carga una partitura (.musicxml / .xml / .pdf)"; color:#888; font-size:13px; display:block; text-align:center; padding:40px 0; }
+  #pdfHost canvas { width:100%; display:block; margin-bottom:4px; }
+  .slots { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .slot { border:1px solid var(--line); border-radius:10px; padding:10px; text-align:center; }
+  .slot.sel { border-color:var(--acc); box-shadow:0 0 0 1px var(--acc); }
+  .slot h3 { font-size:13px; margin-bottom:6px; }
+  .slot video { width:100%; border-radius:8px; background:#000; aspect-ratio:9/16; object-fit:cover; }
+  .slot .st { font-size:12px; color:var(--mut); margin:6px 0; }
+  .slot .ctr { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
+  .slot .ctr button { padding:6px 8px; font-size:12px; }
+  .mixrow { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:13px; }
+  .mixrow b { width:64px; }
+  .mixrow input[type=range] { flex:1; }
+  .mixrow .val { width:66px; text-align:right; color:var(--mut); font-variant-numeric:tabular-nums; }
+  #camPrev { width:100%; max-width:340px; aspect-ratio:9/16; background:#000; border-radius:10px; object-fit:cover; display:block; margin:auto; }
+  #recOverlay { position:fixed; inset:0; background:#0e0f12; z-index:50; display:none; flex-direction:column; }
+  #recOverlay.on { display:flex; }
+  #ovScore { flex:1; overflow-y:auto; background:#fff; }
+  #ovBottom { display:flex; align-items:center; gap:12px; padding:10px 14px; background:#16181d; border-top:2px solid var(--acc); }
+  #ovCam { width:84px; aspect-ratio:9/16; object-fit:cover; border-radius:8px; background:#000; }
+  #ovCount { font-size:44px; font-weight:800; color:var(--acc); min-width:64px; text-align:center; font-variant-numeric:tabular-nums; }
+  #ovInfo { flex:1; font-size:13px; color:var(--mut); }
+  #exportBox video { width:100%; max-width:340px; border-radius:10px; }
+  .badge { display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:20px; padding:2px 9px; color:var(--mut); margin-left:6px; }
+</style>
+</head>
+<body>
+<header><h1>🎺 Estudio Multipista</h1><span>uso personal — v1</span></header>
+
+<section id="secScore">
+  <h2>1 · Partitura</h2>
+  <div class="row">
+    <input type="file" id="scoreFile" accept=".xml,.musicxml,.pdf">
+    <span id="scoreName" class="badge" style="display:none"></span>
+  </div>
+  <div class="row">
+    <label>Tempo <input type="number" id="bpm" value="90" min="30" max="220"> ppm</label>
+    <label>Pulsos/compás <input type="number" id="beatsBar" value="4" min="1" max="12"></label>
+    <button id="btnTestKaraoke">▶ Probar karaoke</button>
+    <button id="btnStopKaraoke" style="display:none">■ Parar</button>
+  </div>
+  <div class="row" id="pdfScrollRow" style="display:none">
+    <label>Auto-scroll PDF</label>
+    <input type="range" id="pdfSpeed" min="0" max="120" value="0" step="5">
+    <span class="val" id="pdfSpeedVal">parado</span>
+  </div>
+  <div id="scoreHost"></div>
+  <p class="hint">El karaoke (notas iluminadas al ritmo) funciona con archivos <b>MusicXML</b>. Los <b>PDF</b> se muestran con desplazamiento automático regulable — un PDF no contiene las notas, solo la imagen.</p>
+</section>
+
+<section id="secRec">
+  <h2>2 · Grabación</h2>
+  <div class="row"><button id="btnCam" class="primary">Activar cámara y micro</button><span id="camState" class="badge">cámara inactiva</span></div>
+  <video id="camPrev" autoplay muted playsinline></video>
+  <div class="row">
+    <label>Compases de cuenta atrás <input type="number" id="countBars" value="1" min="0" max="4"></label>
+    <label><input type="checkbox" id="clickDuring" checked> clic durante la grabación</label>
+    <label><input type="checkbox" id="monitorPrev" checked> oír pistas ya grabadas</label>
+  </div>
+  <div class="row">
+    <label>Grabar en:</label>
+    <div class="slots" id="slotPick" style="flex:1"></div>
+  </div>
+  <div class="row">
+    <button id="btnRec" class="primary" disabled>● Grabar (con partitura)</button>
+    <button id="btnStop" class="danger" style="display:none">■ Terminar toma</button>
+  </div>
+  <p class="hint">⚠️ Usa <b>auriculares</b> siempre que grabes sobre otras voces o con clic activo: si suenan por el altavoz, el micro los cuela en la toma. Graba primero la voz más grave — es el metrónomo real. El micro se configura sin procesado (sin cancelación de eco ni reducción de ruido) para respetar el sonido del instrumento.</p>
+</section>
+
+<section id="secMix">
+  <h2>3 · Pistas y mezcla</h2>
+  <div class="slots" id="slotGrid"></div>
+  <div id="mixers"></div>
+  <div class="row">
+    <button id="btnPlayAll">▶ Reproducir todo</button>
+    <button id="btnStopAll" style="display:none">■ Parar</button>
+    <button id="btnExport" class="primary">⬇ Exportar vídeo final</button>
+  </div>
+  <div id="exportBox"></div>
+  <p class="hint">El desfase corrige la latencia de cada toma respecto al clic (positivo = la pista suena más tarde). El vídeo exportado sale en formato WebM 1080×1920: YouTube lo acepta tal cual; para Instagram conviértelo a MP4 (CapCut lo hace en un minuto).</p>
+</section>
+
+<div id="recOverlay">
+  <div id="ovScore"></div>
+  <div id="ovBottom">
+    <video id="ovCam" autoplay muted playsinline></video>
+    <div id="ovCount">—</div>
+    <div id="ovInfo">Preparado</div>
+    <button id="ovStop" class="danger">■ Terminar</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const NSLOTS = 4;
+const state = {
+  scoreType: null, osmd: null, noteTimes: [], cursorIdx: 0,
+  camStream: null, recorder: null, recChunks: [], recSlot: 0, recording: false,
+  actx: null, recStartT: 0, clickTimer: null, nextClickT: 0, clickBeat: 0,
+  karaokeRAF: null, karaokeT0: 0, karaokeMode: null,
+  tracks: Array.from({length: NSLOTS}, () => ({blob:null, url:null, gain:1, offset:0})),
+  monitors: [], pdfRAF: null, exporting: false
+};
+
+function actx(){ if(!state.actx) state.actx = new (window.AudioContext||window.webkitAudioContext)(); return state.actx; }
+function bpm(){ return Math.max(30, Number($("bpm").value)||90); }
+function beatsBar(){ return Math.max(1, Number($("beatsBar").value)||4); }
+
+/* ---------- partitura ---------- */
+$("scoreFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; if(!f) return;
+  $("scoreName").style.display=""; $("scoreName").textContent = f.name;
+  const host = $("scoreHost"); host.innerHTML = ""; $("pdfScrollRow").style.display = "none";
+  try {
+    if (/\.pdf$/i.test(f.name)) {
+      state.scoreType = "pdf";
+      const div = document.createElement("div"); div.id = "pdfHost"; host.appendChild(div);
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      const pdf = await pdfjsLib.getDocument({data: await f.arrayBuffer()}).promise;
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const vp = page.getViewport({scale: 1.6});
+        const c = document.createElement("canvas"); c.width = vp.width; c.height = vp.height;
+        await page.render({canvasContext: c.getContext("2d"), viewport: vp}).promise;
+        div.appendChild(c);
+      }
+      $("pdfScrollRow").style.display = "";
+    } else {
+      state.scoreType = "xml";
+      state.osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(host, {autoResize:true, drawTitle:true, followCursor:true});
+      await state.osmd.load(await f.text());
+      state.osmd.render();
+      buildNoteTimes();
+    }
+  } catch(err) { host.innerHTML=""; alert("No se pudo cargar la partitura: " + err.message); }
+});
+
+function buildNoteTimes(){
+  const o = state.osmd; if(!o) return;
+  o.cursor.show(); o.cursor.reset();
+  state.noteTimes = [];
+  const it = o.cursor.Iterator;
+  while (!it.EndReached) { state.noteTimes.push(it.CurrentSourceTimestamp.RealValue); o.cursor.next(); }
+  o.cursor.reset(); state.cursorIdx = 0;
+}
+function karaokeSeconds(realValue){ return realValue * 4 * (60 / bpm()); }
+
+function startKaraoke(anchorT){
+  if (state.scoreType === "xml" && state.osmd) {
+    state.osmd.cursor.show(); state.osmd.cursor.reset(); state.cursorIdx = 0;
+    state.karaokeT0 = anchorT; state.karaokeMode = "xml";
+    const step = () => {
+      const el = actx().currentTime - state.karaokeT0;
+      while (state.cursorIdx + 1 < state.noteTimes.length && el >= karaokeSeconds(state.noteTimes[state.cursorIdx + 1])) {
+        state.osmd.cursor.next(); state.cursorIdx++;
+        const ce = state.osmd.cursor.cursorElement;
+        if (ce) { const box = ce.getBoundingClientRect(), h = ce.closest("#ovScore,#scoreHost");
+          if (h) { const hb = h.getBoundingClientRect(); if (box.top < hb.top || box.bottom > hb.bottom - 40) ce.scrollIntoView({block:"center", behavior:"smooth"}); } }
+      }
+      state.karaokeRAF = requestAnimationFrame(step);
+    };
+    state.karaokeRAF = requestAnimationFrame(step);
+  } else if (state.scoreType === "pdf") {
+    state.karaokeMode = "pdf";
+    const speedCtl = $("pdfSpeed");
+    let last = performance.now();
+    const step = (now) => {
+      const sp = Number(speedCtl.value);
+      const cont = document.querySelector("#recOverlay.on") ? $("ovScore") : $("scoreHost");
+      if (sp > 0) cont.scrollTop += sp * (now - last) / 1000;
+      last = now;
+      state.karaokeRAF = requestAnimationFrame(step);
+    };
+    state.karaokeRAF = requestAnimationFrame(step);
+  }
+}
+function stopKaraoke(){
+  if (state.karaokeRAF) cancelAnimationFrame(state.karaokeRAF);
+  state.karaokeRAF = null;
+  if (state.osmd && state.scoreType === "xml") { try { state.osmd.cursor.reset(); } catch(e){} }
+}
+
+$("pdfSpeed").addEventListener("input", () => {
+  const v = Number($("pdfSpeed").value);
+  $("pdfSpeedVal").textContent = v === 0 ? "parado" : v + " px/s";
+});
+
+$("btnTestKaraoke").addEventListener("click", async () => {
+  if (!state.scoreType) return alert("Carga antes una partitura.");
+  await actx().resume();
+  $("btnTestKaraoke").style.display = "none"; $("btnStopKaraoke").style.display = "";
+  const t0 = actx().currentTime + 0.2;
+  startClicks(t0, true);
+  startKaraoke(t0);
+});
+$("btnStopKaraoke").addEventListener("click", () => {
+  stopClicks(); stopKaraoke();
+  $("btnTestKaraoke").style.display = ""; $("btnStopKaraoke").style.display = "none";
+});
+
+/* ---------- metrónomo ---------- */
+function clickAt(t, accent){
+  const a = actx(), o = a.createOscillator(), g = a.createGain();
+  o.frequency.value = accent ? 1568 : 1046;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.4, t + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+  o.connect(g); g.connect(a.destination);
+  o.start(t); o.stop(t + 0.09);
+}
+function startClicks(t0, forever){
+  stopClicks();
+  state.nextClickT = t0; state.clickBeat = 0; state.clickForever = forever;
+  state.clickTimer = setInterval(() => {
+    const spb = 60 / bpm();
+    while (state.nextClickT < actx().currentTime + 0.35) {
+      clickAt(state.nextClickT, state.clickBeat % beatsBar() === 0);
+      state.nextClickT += spb; state.clickBeat++;
+    }
+  }, 100);
+}
+function stopClicks(){ if (state.clickTimer) clearInterval(state.clickTimer); state.clickTimer = null; }
+
+/* ---------- cámara ---------- */
+$("btnCam").addEventListener("click", async () => {
+  try {
+    state.camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: {ideal:1080}, height: {ideal:1920} },
+      audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
+    });
+    $("camPrev").srcObject = state.camStream;
+    $("ovCam").srcObject = state.camStream;
+    $("camState").textContent = "cámara lista ✓"; $("camState").style.color = "var(--ok)";
+    $("btnRec").disabled = false;
+  } catch(err) {
+    $("camState").textContent = "sin acceso: " + err.name; $("camState").style.color = "var(--bad)";
+    alert("No hay acceso a cámara/micro. Recuerda: solo funciona en localhost o en una web HTTPS.\n\n" + err.message);
+  }
+});
+
+/* ---------- slots ---------- */
+function fmtOffset(ms){ return (ms>0?"+":"") + ms + " ms"; }
+function renderSlots(){
+  const pick = $("slotPick"); pick.innerHTML = "";
+  for (let i = 0; i < NSLOTS; i++) {
+    const b = document.createElement("button");
+    b.textContent = "Voz " + (i+1) + (state.tracks[i].blob ? " ●" : "");
+    if (i === state.recSlot) b.classList.add("primary");
+    b.onclick = () => { state.recSlot = i; renderSlots(); };
+    pick.appendChild(b);
+  }
+  const grid = $("slotGrid"); grid.innerHTML = "";
+  const mix = $("mixers"); mix.innerHTML = "";
+  state.tracks.forEach((tr, i) => {
+    const d = document.createElement("div"); d.className = "slot";
+    d.innerHTML = `<h3>Voz ${i+1}</h3>`;
+    if (tr.url) {
+      const v = document.createElement("video"); v.src = tr.url; v.playsInline = true; v.controls = true; v.dataset.slot = i;
+      d.appendChild(v);
+      const ctr = document.createElement("div"); ctr.className = "ctr";
+      const dl = document.createElement("button"); dl.textContent = "⬇ Guardar";
+      dl.onclick = () => { const a = document.createElement("a"); a.href = tr.url; a.download = `voz${i+1}.webm`; a.click(); };
+      const rm = document.createElement("button"); rm.textContent = "✕ Borrar";
+      rm.onclick = () => { URL.revokeObjectURL(tr.url); state.tracks[i] = {blob:null,url:null,gain:1,offset:0}; renderSlots(); };
+      ctr.appendChild(dl); ctr.appendChild(rm); d.appendChild(ctr);
+      const m = document.createElement("div");
+      m.innerHTML = `<div class="mixrow"><b>Voz ${i+1}</b> vol <input type="range" min="0" max="1.5" step="0.05" value="${tr.gain}" data-g="${i}"><span class="val">${Math.round(tr.gain*100)}%</span></div>
+      <div class="mixrow"><b></b> desfase <input type="range" min="-300" max="300" step="10" value="${tr.offset}" data-o="${i}"><span class="val">${fmtOffset(tr.offset)}</span></div>`;
+      mix.appendChild(m);
+    } else {
+      const st = document.createElement("div"); st.className = "st"; st.textContent = "vacía"; d.appendChild(st);
+    }
+    grid.appendChild(d);
+  });
+  mix.querySelectorAll("input[data-g]").forEach(inp => inp.addEventListener("input", e => {
+    const i = Number(e.target.dataset.g); state.tracks[i].gain = Number(e.target.value);
+    e.target.nextElementSibling.textContent = Math.round(state.tracks[i].gain*100) + "%";
+  }));
+  mix.querySelectorAll("input[data-o]").forEach(inp => inp.addEventListener("input", e => {
+    const i = Number(e.target.dataset.o); state.tracks[i].offset = Number(e.target.value);
+    e.target.nextElementSibling.textContent = fmtOffset(state.tracks[i].offset);
+  }));
+}
+
+/* ---------- grabación ---------- */
+function pickMime(){
+  for (const m of ["video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"])
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+$("btnRec").addEventListener("click", () => beginTake());
+$("btnStop").addEventListener("click", () => endTake());
+$("ovStop").addEventListener("click", () => endTake());
+
+async function beginTake(){
+  if (!state.camStream) return;
+  if (state.tracks[state.recSlot].blob && !confirm(`La voz ${state.recSlot+1} ya tiene una toma. ¿Sobrescribirla?`)) return;
+  await actx().resume();
+  const spb = 60 / bpm(), cBeats = Math.max(0, Number($("countBars").value)||0) * beatsBar();
+  const t0 = actx().currentTime + 0.25;
+  const recT = t0 + cBeats * spb;
+  state.recStartT = recT;
+
+  // overlay con partitura
+  if (state.scoreType) {
+    const sc = $("scoreHost").firstElementChild || $("scoreHost");
+    if ($("scoreHost").firstElementChild) $("ovScore").appendChild($("scoreHost").firstElementChild);
+    $("recOverlay").classList.add("on");
+  }
+  $("btnRec").style.display = "none"; $("btnStop").style.display = "";
+  $("ovInfo").textContent = "Voz " + (state.recSlot+1) + " · " + bpm() + " ppm";
+
+  // clics: cuenta atrás siempre; después según checkbox
+  if (cBeats > 0 || $("clickDuring").checked) {
+    startClicks(t0, true);
+    if (!$("clickDuring").checked) setTimeout(stopClicks, (recT - actx().currentTime) * 1000 + 30);
+  }
+  // contador visual de cuenta atrás
+  let shown = cBeats;
+  $("ovCount").textContent = cBeats > 0 ? String(Math.ceil(cBeats / beatsBar() * beatsBar())) : "REC";
+  const cd = setInterval(() => {
+    const remain = Math.ceil((recT - actx().currentTime) / spb);
+    if (remain <= 0) { $("ovCount").textContent = "REC"; $("ovCount").style.color = "var(--bad)"; clearInterval(cd); }
+    else $("ovCount").textContent = String(remain);
+  }, 60);
+
+  // pistas previas por auriculares
+  state.monitors = [];
+  if ($("monitorPrev").checked) {
+    state.tracks.forEach((tr, i) => {
+      if (tr.url && i !== state.recSlot) {
+        const v = document.createElement("video"); v.src = tr.url; v.style.display = "none";
+        v.volume = Math.min(1, tr.gain); document.body.appendChild(v); state.monitors.push({v, off: tr.offset});
+      }
+    });
+  }
+  // arranque sincronizado
+  const delayMs = (recT - actx().currentTime) * 1000;
+  setTimeout(() => {
+    state.recChunks = [];
+    try {
+      state.recorder = new MediaRecorder(state.camStream, {mimeType: pickMime(), videoBitsPerSecond: 6_000_000});
+    } catch(e) { state.recorder = new MediaRecorder(state.camStream); }
+    state.recorder.ondataavailable = e => { if (e.data.size) state.recChunks.push(e.data); };
+    state.recorder.onstop = saveTake;
+    state.recorder.start();
+    state.recording = true;
+    state.monitors.forEach(m => {
+      const o = m.off / 1000;
+      if (o >= 0) { m.v.currentTime = 0; setTimeout(() => m.v.play(), o * 1000); }
+      else { m.v.currentTime = -o; m.v.play(); }
+    });
+    startKaraoke(state.recStartT);
+  }, Math.max(0, delayMs));
+}
+
+function endTake(){
+  stopClicks(); stopKaraoke();
+  if (state.recorder && state.recording) state.recorder.stop();
+  state.recording = false;
+  state.monitors.forEach(m => { m.v.pause(); m.v.remove(); });
+  state.monitors = [];
+  // devolver partitura a su sección
+  if ($("ovScore").firstElementChild) $("scoreHost").appendChild($("ovScore").firstElementChild);
+  $("recOverlay").classList.remove("on");
+  $("ovCount").textContent = "—"; $("ovCount").style.color = "var(--acc)";
+  $("btnRec").style.display = ""; $("btnStop").style.display = "none";
+}
+
+function saveTake(){
+  const blob = new Blob(state.recChunks, {type: state.recorder.mimeType || "video/webm"});
+  const tr = state.tracks[state.recSlot];
+  if (tr.url) URL.revokeObjectURL(tr.url);
+  tr.blob = blob; tr.url = URL.createObjectURL(blob);
+  renderSlots();
+}
+
+/* ---------- reproducir todo ---------- */
+let playAllEls = [];
+$("btnPlayAll").addEventListener("click", () => {
+  const vids = [...document.querySelectorAll("#slotGrid video")];
+  if (!vids.length) return alert("No hay tomas grabadas.");
+  playAllEls = vids;
+  vids.forEach(v => {
+    const tr = state.tracks[Number(v.dataset.slot)];
+    v.volume = Math.min(1, tr.gain);
+    const o = tr.offset / 1000;
+    if (o >= 0) { v.currentTime = 0; setTimeout(() => v.play(), o * 1000); }
+    else { v.currentTime = -o; v.play(); }
+  });
+  $("btnPlayAll").style.display = "none"; $("btnStopAll").style.display = "";
+});
+$("btnStopAll").addEventListener("click", () => {
+  playAllEls.forEach(v => { v.pause(); v.currentTime = 0; });
+  $("btnPlayAll").style.display = ""; $("btnStopAll").style.display = "none";
+});
+
+/* ---------- exportación ---------- */
+function layoutRects(n, W, H){
+  if (n === 1) return [[0,0,W,H]];
+  if (n === 2) return [[0,0,W,H/2],[0,H/2,W,H/2]];
+  if (n === 3) return [[0,0,W,H/3],[0,H/3,W,H/3],[0,2*H/3,W,H/3]];
+  return [[0,0,W/2,H/2],[W/2,0,W/2,H/2],[0,H/2,W/2,H/2],[W/2,H/2,W/2,H/2]];
+}
+function drawCover(ctx, v, x, y, w, h){
+  const vw = v.videoWidth, vh = v.videoHeight; if (!vw || !vh) return;
+  const s = Math.max(w/vw, h/vh), dw = vw*s, dh = vh*s;
+  ctx.drawImage(v, x + (w-dw)/2, y + (h-dh)/2, dw, dh);
+}
+$("btnExport").addEventListener("click", async () => {
+  if (state.exporting) return;
+  const used = state.tracks.map((t,i)=>({...t,i})).filter(t => t.blob);
+  if (!used.length) return alert("No hay tomas que exportar.");
+  state.exporting = true; $("btnExport").textContent = "Exportando… (se reproduce en tiempo real)";
+  const W = 1080, H = 1920;
+  const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const a = actx(); await a.resume();
+  const dest = a.createMediaStreamDestination();
+  const els = used.map(t => {
+    const v = document.createElement("video");
+    v.src = t.url; v.playsInline = true; v.muted = false; v.volume = 1;
+    const src = a.createMediaElementSource(v);
+    const g = a.createGain(); g.gain.value = t.gain;
+    src.connect(g); g.connect(dest);
+    return {v, off: t.offset};
+  });
+  await Promise.all(els.map(e => new Promise(r => { e.v.onloadedmetadata = r; })));
+  const rects = layoutRects(els.length, W, H);
+  const vidStream = canvas.captureStream(30);
+  const out = new MediaStream([...vidStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  const rec = new MediaRecorder(out, {mimeType: pickMime(), videoBitsPerSecond: 10_000_000});
+  const chunks = [];
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    const blob = new Blob(chunks, {type: rec.mimeType || "video/webm"});
+    const url = URL.createObjectURL(blob);
+    const box = $("exportBox"); box.innerHTML = "<p class='hint'>Resultado:</p>";
+    const v = document.createElement("video"); v.src = url; v.controls = true; v.playsInline = true;
+    const dl = document.createElement("a"); dl.href = url; dl.download = "multipista.webm";
+    dl.textContent = "⬇ Descargar vídeo"; dl.style.cssText = "display:block;color:var(--acc);margin:8px 0;font-size:15px";
+    box.appendChild(v); box.appendChild(dl);
+    els.forEach(e => e.v.remove());
+    state.exporting = false; $("btnExport").textContent = "⬇ Exportar vídeo final";
+  };
+  let ended = 0;
+  els.forEach(e => { e.v.onended = () => { if (++ended === els.length) { cancelAnimationFrame(raf); rec.stop(); } }; });
+  rec.start();
+  els.forEach(e => {
+    const o = e.off / 1000;
+    if (o >= 0) setTimeout(() => e.v.play(), o * 1000);
+    else { e.v.currentTime = -o; e.v.play(); }
+  });
+  let raf;
+  const draw = () => {
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    els.forEach((e, i) => drawCover(ctx, e.v, ...rects[i]));
+    raf = requestAnimationFrame(draw);
+  };
+  draw();
+});
+
+renderSlots();
+</script>
+</body>
+</html>
