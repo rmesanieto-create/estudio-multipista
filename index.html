@@ -218,6 +218,11 @@
   </div>
   <div class="row"><button id="btnCam" class="primary">Activar cámara y micro</button><span id="camState" class="badge">cámara inactiva</span></div>
   <video id="camPrev" autoplay muted playsinline></video>
+  <div class="row" id="zoomRow" style="display:none">
+    <label><i>Zoom</i></label>
+    <input type="range" id="zoom" min="1" max="5" value="1" step="0.1" style="flex:1; max-width:340px">
+    <span class="val" id="zoomVal">1.0×</span>
+  </div>
   <div class="row">
     <label>Compases de cuenta atrás <input type="number" id="countBars" value="1" min="0" max="4"></label>
     <label><input type="checkbox" id="clickDuring" checked> clic durante la grabación</label>
@@ -466,11 +471,31 @@ $("btnCam").addEventListener("click", async () => {
     $("ovCam").srcObject = state.camStream;
     $("camState").textContent = "cámara lista ✓"; $("camState").style.color = "var(--ok)";
     $("btnRec").disabled = false;
+    setupZoom();
   } catch(err) {
     $("camState").textContent = "sin acceso: " + err.name; $("camState").style.color = "var(--bad)";
     alert("No hay acceso a cámara/micro. Recuerda: solo funciona en localhost o en una web HTTPS.\n\n" + err.message);
   }
 });
+
+/* ---------- zoom de cámara (Android: zoom real por hardware) ---------- */
+function setupZoom(){
+  try {
+    const track = state.camStream && state.camStream.getVideoTracks()[0];
+    const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps || !("zoom" in caps)) { $("zoomRow").style.display = "none"; return; }
+    const z = $("zoom");
+    z.min = caps.zoom.min; z.max = caps.zoom.max; z.step = caps.zoom.step || 0.1;
+    const cur = (track.getSettings && track.getSettings().zoom) || caps.zoom.min;
+    z.value = cur; $("zoomVal").textContent = Number(cur).toFixed(1) + "×";
+    $("zoomRow").style.display = "";
+    z.oninput = () => {
+      const v = Number(z.value);
+      $("zoomVal").textContent = v.toFixed(1) + "×";
+      track.applyConstraints({advanced: [{zoom: v}]}).catch(() => {});
+    };
+  } catch(e) { $("zoomRow").style.display = "none"; }
+}
 
 /* ---------- slots ---------- */
 function fmtOffset(ms){ return (ms>0?"+":"") + ms + " ms"; }
