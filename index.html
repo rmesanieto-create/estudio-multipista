@@ -160,6 +160,10 @@
   #ovBottom { display:flex; align-items:center; gap:14px; padding:14px 18px calc(14px + env(safe-area-inset-bottom)); background:var(--panel-2); border-top:1px solid var(--line); box-shadow:0 -8px 24px -16px rgba(0,0,0,.35); }
   #ovCam { width:74px; aspect-ratio:9/16; object-fit:cover; border-radius:10px; background:#000; flex:none; box-shadow:0 0 0 1px var(--line); }
   #ovCount { font-family:var(--disp); font-size:46px; font-weight:700; color:var(--acc); min-width:78px; text-align:center; font-variant-numeric:tabular-nums; line-height:1; letter-spacing:-.02em; }
+  #ovCount.pulse { animation:beatPulse .18s ease-out; }
+  @keyframes beatPulse { from { transform:scale(1.3); } to { transform:scale(1); } }
+  #ovGuide { position:absolute; left:0; right:0; top:24%; border-top:2px solid rgba(45,106,79,.5); pointer-events:none; z-index:2; }
+  #ovGuide::before { content:"▶"; position:absolute; left:6px; top:-11px; font-size:13px; color:rgba(45,106,79,.75); }
   #ovInfo { flex:1; font-size:13px; color:var(--mut); font-weight:500; }
   #exportBox { margin-top:12px; }
   #exportBox video { width:100%; max-width:300px; border-radius:var(--r); display:block; box-shadow:0 8px 30px -14px #000; }
@@ -203,12 +207,11 @@
     <button id="btnStopKaraoke" style="display:none">■ Parar</button>
   </div>
   <div class="row" id="pdfScrollRow" style="display:none">
-    <label>Auto-scroll PDF</label>
-    <input type="range" id="pdfSpeed" min="0" max="120" value="0" step="5">
-    <span class="val" id="pdfSpeedVal">parado</span>
+    <label>Compases de la partitura <input type="number" id="pdfBars" value="32" min="1" max="500"></label>
+    <span class="badge">el PDF avanza solo según tempo y compases</span>
   </div>
   <div id="scoreHost"></div>
-  <p class="hint">El karaoke (notas iluminadas al ritmo) funciona con archivos <b>MusicXML</b>. Los <b>PDF</b> se muestran con desplazamiento automático regulable — un PDF no contiene las notas, solo la imagen.</p>
+  <p class="hint">El karaoke nota a nota funciona con archivos <b>MusicXML</b>. Con <b>PDF</b>, indica cuántos compases tiene la partitura y avanzará sola al ritmo del tempo durante la grabación, con el pulso marcado en pantalla.</p>
 </section>
 
 <section id="secRec">
@@ -270,6 +273,7 @@
 
 <div id="recOverlay">
   <div id="ovScore"></div>
+  <div id="ovGuide" style="display:none"></div>
   <div id="ovBottom">
     <video id="ovCam" autoplay muted playsinline></video>
     <div id="ovCount">—</div>
@@ -401,13 +405,14 @@ function startKaraoke(anchorT){
     state.karaokeRAF = requestAnimationFrame(step);
   } else if (state.scoreType === "pdf") {
     state.karaokeMode = "pdf";
-    const speedCtl = $("pdfSpeed");
-    let last = performance.now();
-    const step = (now) => {
-      const sp = Number(speedCtl.value);
+    const bars = Math.max(1, Number($("pdfBars").value) || 32);
+    const totalSec = bars * beatsBar() * (60 / bpm());
+    $("ovGuide").style.display = "";
+    const step = () => {
       const cont = document.querySelector("#recOverlay.on") ? $("ovScore") : $("scoreHost");
-      if (sp > 0) cont.scrollTop += sp * (now - last) / 1000;
-      last = now;
+      const dist = Math.max(0, cont.scrollHeight - cont.clientHeight);
+      const el = actx().currentTime - anchorT;
+      cont.scrollTop = Math.min(dist, Math.max(0, el / totalSec * dist));
       state.karaokeRAF = requestAnimationFrame(step);
     };
     state.karaokeRAF = requestAnimationFrame(step);
@@ -416,13 +421,45 @@ function startKaraoke(anchorT){
 function stopKaraoke(){
   if (state.karaokeRAF) cancelAnimationFrame(state.karaokeRAF);
   state.karaokeRAF = null;
+  $("ovGuide").style.display = "none";
   if (state.osmd && state.scoreType === "xml") { try { state.osmd.cursor.reset(); } catch(e){} }
 }
 
-$("pdfSpeed").addEventListener("input", () => {
-  const v = Number($("pdfSpeed").value);
-  $("pdfSpeedVal").textContent = v === 0 ? "parado" : v + " px/s";
-});
+/* ---------- marcador visual de pulso ---------- */
+let beatRAF = null;
+function startBeatDisplay(anchorT){
+  const el = $("ovCount"); let lastBeat = -1;
+  const loop = () => {
+    const t = actx().currentTime - anchorT;
+    if (t >= 0) {
+      const b = Math.floor(t / (60 / bpm()));
+      if (b !== lastBeat) {
+        lastBeat = b;
+        const inBar = (b % beatsBar()) + 1;
+        el.textContent = inBar;
+        el.style.color = inBar === 1 ? "var(--bad)" : "var(--acc)";
+        el.classList.remove("pulse"); void el.offsetWidth; el.classList.add("pulse");
+      }
+    }
+    beatRAF = requestAnimationFrame(loop);
+  };
+  beatRAF = requestAnimationFrame(loop);
+}
+function stopBeatDisplay(){
+  if (beatRAF) cancelAnimationFrame(beatRAF); beatRAF = null;
+  $("ovCount").classList.remove("pulse");
+}
+
+/* ---------- arreglo de vídeos sin duración (bug de MediaRecorder en Chrome) ---------- */
+function fixSeekable(v){
+  v.preload = "metadata";
+  v.addEventListener("loadedmetadata", () => {
+    if (v.duration === Infinity || isNaN(v.duration)) {
+      v.currentTime = 1e7;
+      v.addEventListener("timeupdate", function h(){ v.removeEventListener("timeupdate", h); v.currentTime = 0; });
+    }
+  }, {once:true});
+}
 
 $("btnTestKaraoke").addEventListener("click", async () => {
   if (!state.scoreType) return alert("Carga antes una partitura.");
@@ -452,11 +489,11 @@ function startClicks(t0, forever){
   state.nextClickT = t0; state.clickBeat = 0; state.clickForever = forever;
   state.clickTimer = setInterval(() => {
     const spb = 60 / bpm();
-    while (state.nextClickT < actx().currentTime + 0.35) {
+    while (state.nextClickT < actx().currentTime + 1.5) {
       clickAt(state.nextClickT, state.clickBeat % beatsBar() === 0);
       state.nextClickT += spb; state.clickBeat++;
     }
-  }, 100);
+  }, 200);
 }
 function stopClicks(){ if (state.clickTimer) clearInterval(state.clickTimer); state.clickTimer = null; }
 
@@ -464,7 +501,7 @@ function stopClicks(){ if (state.clickTimer) clearInterval(state.clickTimer); st
 $("btnCam").addEventListener("click", async () => {
   try {
     state.camStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: {ideal:1080}, height: {ideal:1920} },
+      video: { facingMode: "user", width: {ideal:1280}, height: {ideal:720}, resizeMode: {ideal:"none"} },
       audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
     });
     $("camPrev").srcObject = state.camStream;
@@ -515,6 +552,7 @@ function renderSlots(){
     d.innerHTML = `<h3>Voz ${i+1}</h3>`;
     if (tr.url) {
       const v = document.createElement("video"); v.src = tr.url; v.playsInline = true; v.controls = true; v.dataset.slot = i;
+      fixSeekable(v);
       d.appendChild(v);
       const ctr = document.createElement("div"); ctr.className = "ctr";
       const dl = document.createElement("button"); dl.textContent = "⬇ Guardar";
@@ -659,9 +697,9 @@ async function beginTake(){
   // contador visual de cuenta atrás
   let shown = cBeats;
   $("ovCount").textContent = cBeats > 0 ? String(Math.ceil(cBeats / beatsBar() * beatsBar())) : "REC";
-  const cd = setInterval(() => {
+  state.cdTimer = setInterval(() => {
     const remain = Math.ceil((recT - actx().currentTime) / spb);
-    if (remain <= 0) { $("ovCount").textContent = "REC"; $("ovCount").style.color = "var(--bad)"; clearInterval(cd); }
+    if (remain <= 0) { $("ovCount").textContent = "REC"; $("ovCount").style.color = "var(--bad)"; clearInterval(state.cdTimer); }
     else $("ovCount").textContent = String(remain);
   }, 60);
 
@@ -671,13 +709,14 @@ async function beginTake(){
     state.tracks.forEach((tr, i) => {
       if (tr.url && i !== state.recSlot) {
         const v = document.createElement("video"); v.src = tr.url; v.style.display = "none";
+        fixSeekable(v);
         v.volume = Math.min(1, tr.gain); document.body.appendChild(v); state.monitors.push({v, off: tr.offset});
       }
     });
   }
   // arranque sincronizado
   const delayMs = (recT - actx().currentTime) * 1000;
-  setTimeout(() => {
+  state.startTimer = setTimeout(() => {
     state.recChunks = [];
     try {
       state.recorder = new MediaRecorder(state.camStream, {mimeType: pickMime(), videoBitsPerSecond: 6_000_000});
@@ -692,11 +731,13 @@ async function beginTake(){
       else { m.v.currentTime = -o; m.v.play(); }
     });
     startKaraoke(state.recStartT);
+    startBeatDisplay(state.recStartT);
   }, Math.max(0, delayMs));
 }
 
 function endTake(){
-  stopClicks(); stopKaraoke(); releaseWake();
+  clearTimeout(state.startTimer); clearInterval(state.cdTimer);
+  stopClicks(); stopKaraoke(); stopBeatDisplay(); releaseWake();
   if (state.recorder && state.recording) state.recorder.stop();
   state.recording = false;
   state.monitors.forEach(m => { m.v.pause(); m.v.remove(); });
@@ -763,6 +804,7 @@ $("btnExport").addEventListener("click", async () => {
   for (const t of used) {
     const v = document.createElement("video");
     v.src = t.url; v.playsInline = true; v.muted = false; v.volume = 1;
+    fixSeekable(v);
     const src = a.createMediaElementSource(v);
     await buildTrackChain(a, src, t.gain, bus);
     els.push({v, off: t.offset});
